@@ -4,7 +4,9 @@ import win32gui, win32ui, win32con
 import time
 import collections
 
-# 캡처 및 분석 함수들은 이전과 동일합니다.
+# ==============================================================================
+# 1. 윈도우 캡처 함수
+# ==============================================================================
 def capture_window_by_title(window_title):
     hwnd = win32gui.FindWindow(None, window_title)
     if hwnd == 0: return None
@@ -24,6 +26,9 @@ def capture_window_by_title(window_title):
     saveDC.DeleteDC(); mfcDC.DeleteDC(); win32gui.ReleaseDC(hwnd, hwndDC)
     return frame[..., :3].copy()
 
+# ==============================================================================
+# 2. 분석 함수들
+# ==============================================================================
 def get_road_roi(frame, roi_settings):
     h, w, _ = frame.shape
     top_y = int(h * roi_settings['top_y']); bottom_y = int(h * roi_settings['bottom_y'])
@@ -56,32 +61,48 @@ def analyze_height_map(frame, roi_mask, roi_settings, height_settings):
                 x,y,wc,hc = cv2.boundingRect(hull)
                 if hc > 0 and (wc / hc) > height_settings['min_aspect_ratio']:
                     hull_mask = np.zeros_like(analysis_mask); cv2.drawContours(hull_mask, [hull], -1, 255, -1)
-                    avg_hue = np.mean(h_channel[np.nonzero(hull_mask)])
-                    if avg_hue < height_settings['hue_threshold_b']: estimated_height = 0.2
-                    else: estimated_height = 0.1
+                    
+                    # --- (수정) 높이 계산 로직 ---
+                    hue_values = h_channel[np.nonzero(hull_mask)]
+                    if len(hue_values) > 0:
+                        avg_hue = np.mean(hue_values)
+                        # 선형 보간을 사용하여 높이를 부드럽게 계산
+                        hue_points = height_settings['height_interpolation_hue']
+                        height_points = height_settings['height_interpolation_m']
+                        estimated_height = np.interp(avg_hue, hue_points, height_points)
+                    
+                    # 거리 계산
                     roi_h = max(1,int(h*roi_settings['bottom_y'])-int(h*roi_settings['top_y']))
                     yb_norm = float(np.clip((y+hc-int(h*roi_settings['top_y']))/roi_h,0.0,1.0))
                     dist_calib = height_settings['distance_calibration']
                     y_points = sorted(dist_calib.keys()); dist_points = [dist_calib[y_val] for y_val in y_points]
                     estimated_distance = float(np.interp(yb_norm,y_points,dist_points))
+                    
     return estimated_height, estimated_distance
 
+# ==============================================================================
+# 3. 메인 로직
+# ==============================================================================
 if __name__ == "__main__":
     REGULAR_WINDOW_TITLE = "경관 위치 <top>"; HEIGHT_WINDOW_TITLE = "경관 위치 <test>"
+    # ### 튜닝용 파라미터 모음 ###
     ROI_SETTINGS_HEIGHT = {'top_y':0.6,'bottom_y':0.98,'top_w':0.25,'bottom_w':0.95}
-    ROI_SETTINGS_PATTERN = {'top_y':0.35,'bottom_y':0.98,'top_w':0.3,'bottom_w':1.0}
-    HEIGHT_SETTINGS = {'hue_lower':0,'hue_upper':95,'min_contour_area':1200,'min_aspect_ratio':1.5,'hue_threshold_b':40,'distance_calibration':{0.0:21.0,0.5:11.0,1.0:1.0},'existence_threshold_m':0.04}
-    PATTERN_SETTINGS = {'yellow_lower':[20,80,80],'yellow_upper':[35,255,255],'min_pixel_area':500}
-
-    CLASSIFICATION_THRESHOLDS = {
-        'height_A_max': 0.13,
-        'height_B_min': 0.13
+    ROI_SETTINGS_PATTERN = {'top_y':0.4,'bottom_y':0.98,'top_w':0.4,'bottom_w':1.0}
+    HEIGHT_SETTINGS = {
+        'hue_lower':0,'hue_upper':95,
+        'min_contour_area':1400,
+        'min_aspect_ratio':1.5,
+        'distance_calibration':{0.0:21.0,0.5:11.0,1.0:1.0},
+        'existence_threshold_m':0.04,
+        'height_interpolation_hue': [15, 55],
+        'height_interpolation_m':   [0.25, 0.05]
     }
+    PATTERN_SETTINGS = {'yellow_lower':[20,80,80],'yellow_upper':[35,255,255],'min_pixel_area':500}
+    CLASSIFICATION_THRESHOLDS = {'height_exist':0.04, 'height_A_max':0.13}
+    
     CONFIRM_FRAME_COUNT = 2
-
     detection_history = collections.deque(maxlen=CONFIRM_FRAME_COUNT)
-    confirmed_type = "None"
-    last_printed_type = None
+    confirmed_type = "None"; last_printed_type = None
 
     while True:
         regular_frame = capture_window_by_title(REGULAR_WINDOW_TITLE); height_frame = capture_window_by_title(HEIGHT_WINDOW_TITLE)
@@ -94,32 +115,23 @@ if __name__ == "__main__":
         current_h, current_d = analyze_height_map(height_frame, road_mask_height, ROI_SETTINGS_HEIGHT, HEIGHT_SETTINGS)
         current_e = current_h >= HEIGHT_SETTINGS['existence_threshold_m']
 
-        # (수정) 최종 타입 판정 로직
-        current_type = "None"
-        h_A_max = CLASSIFICATION_THRESHOLDS['height_A_max']
-        
-        if not current_e: # 존재유무=False (h < 0.04m)
+        current_type = "None"; h_A_max = CLASSIFICATION_THRESHOLDS['height_A_max']
+        if not current_e:
             current_type = "D" if current_p else "None"
-        else: # 존재유무=True (h >= 0.04m)
-            if current_p: # 패턴 있음
-                if current_h <= h_A_max:
-                    current_type = "A"
-                else: # current_h > h_A_max
-                    current_type = "B"
-            else: # 패턴 없음
-                current_type = "C"
+        else:
+            if current_p:
+                if current_h <= h_A_max: current_type = "A"
+                else: current_type = "B"
+            else: current_type = "C"
 
         detection_history.append(current_type)
-
         if len(detection_history) == CONFIRM_FRAME_COUNT and len(set(detection_history)) == 1:
             confirmed_type = detection_history[0]
-        
         if current_type == "None":
-            confirmed_type = "None"
-            detection_history.clear()
+            confirmed_type = "None"; detection_history.clear()
 
         if confirmed_type != "None" and confirmed_type != last_printed_type:
-            print(f"\n--- Detection Confirmed ---\n  H: {current_h:.2f}m | D: {current_d:.1f}m\n  Exist: {current_e} | Pattern: {current_p}\n  Type: {confirmed_type}\n------------------------")
+            print(f"\n--- Confirmed ---\nH:{current_h:.2f}m|D:{current_d:.1f}m|E:{current_e}|P:{current_p}|T:{confirmed_type}\n-----------------")
             last_printed_type = confirmed_type
         elif confirmed_type == "None":
             last_printed_type = "None"
