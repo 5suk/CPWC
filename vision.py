@@ -4,8 +4,8 @@ import numpy as np
 import win32gui, win32ui, win32con
 import time
 import collections
+import queue
 
-# ... (상단의 capture_window_by_title 등 모든 헬퍼 함수는 이전과 동일) ...
 def capture_window_by_title(window_title):
     hwnd = win32gui.FindWindow(None, window_title)
     if hwnd == 0: return None
@@ -13,7 +13,7 @@ def capture_window_by_title(window_title):
     w, h = right - left, bot - top
     if w < 2 or h < 2: return None
     hwndDC = win32gui.GetWindowDC(hwnd)
-    mfcDC  = win32ui.CreateDCFromHandle(hwndDC)
+    mfcDC = win32ui.CreateDCFromHandle(hwndDC)
     saveDC = mfcDC.CreateCompatibleDC()
     saveBitMap = win32ui.CreateBitmap()
     saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
@@ -70,32 +70,30 @@ def analyze_height_map(frame, roi_mask, roi_settings, height_settings):
                     estimated_distance = float(np.interp(yb_norm,y_points,dist_points))
     return estimated_height, estimated_distance
 
-
 def run_vision_processing(vision_queue):
     print("[Vision] 비전 처리 프로세스를 시작합니다.")
-    
+
     REGULAR_WINDOW_TITLE = "경관 위치 <top>"; HEIGHT_WINDOW_TITLE = "경관 위치 <test>"
     ROI_SETTINGS_HEIGHT = {'top_y':0.6,'bottom_y':0.98,'top_w':0.25,'bottom_w':0.95}
     ROI_SETTINGS_PATTERN = {'top_y':0.4,'bottom_y':0.98,'top_w':0.4,'bottom_w':1.0}
     HEIGHT_SETTINGS = {
         'hue_lower':0,'hue_upper':95, 'min_contour_area':1400, 'min_aspect_ratio':1.5,
         'distance_calibration':{0.0:21.0,0.5:11.0,1.0:0.0}, 'existence_threshold_m':0.04,
-        'height_interpolation_hue': [15, 55], 'height_interpolation_m':   [0.25, 0.05]
+        'height_interpolation_hue': [15, 55], 'height_interpolation_m': [0.25, 0.05]
     }
     PATTERN_SETTINGS = {'yellow_lower':[20,80,80],'yellow_upper':[35,255,255],'min_pixel_area':500}
     CLASSIFICATION_THRESHOLDS = {'height_exist':0.04, 'height_A_max':0.13}
-    
+
     CONFIRM_FRAME_COUNT = 2
     detection_history = collections.deque(maxlen=CONFIRM_FRAME_COUNT)
     confirmed_type = "None"; last_printed_type = None
 
     while True:
-        # ... (상단 루프 로직은 이전과 동일) ...
         regular_frame = capture_window_by_title(REGULAR_WINDOW_TITLE); height_frame = capture_window_by_title(HEIGHT_WINDOW_TITLE)
         if regular_frame is None or height_frame is None:
             print("[Vision] 윈도우를 찾을 수 없습니다. 1초 후 재시도합니다.", end='\r')
             time.sleep(1); continue
-        
+
         roi_points_pattern, road_mask_pattern = get_road_roi(regular_frame, ROI_SETTINGS_PATTERN)
         roi_points_height, road_mask_height = get_road_roi(height_frame, ROI_SETTINGS_HEIGHT)
         current_p = detect_pattern(regular_frame, road_mask_pattern, PATTERN_SETTINGS)
@@ -120,23 +118,20 @@ def run_vision_processing(vision_queue):
             print(f"\n[Vision] --- Confirmed ---\nH:{current_h:.2f}m|D:{current_d:.1f}m|E:{current_e}|P:{current_p}|T:{confirmed_type}\n-----------------")
             last_printed_type = confirmed_type
             
-            # ▼▼▼▼▼ [핵심 수정 부분] ▼▼▼▼▼
-            # 데이터 패키지에 감지된 시간(timestamp)을 추가하여 전송합니다.
             data_packet = {
                 'type': confirmed_type,
                 'height_m': current_h,
                 'distance_m': current_d,
-                'timestamp': time.time() # <-- 이 줄이 추가되었습니다!
             }
-            # ▲▲▲▲▲ [핵심 수정 부분] ▲▲▲▲▲
-            
-            vision_queue.put(data_packet)
-            print(f"[Vision] '{confirmed_type}' 타입 정보 패키지를 Control 프로세스로 전송 완료.")
-            
+            try:
+                vision_queue.put_nowait(data_packet)
+                print(f"[Vision] '{confirmed_type}' 타입 정보 패키지를 Control 프로세스로 전송 완료.")
+            except queue.Full:
+                print("[Vision] 경고: Control 큐가 가득 차 데이터를 보낼 수 없습니다.")
+
         elif confirmed_type == "None":
             last_printed_type = "None"
-        
-        # ... (하단의 시각화 로직은 이전과 동일) ...
+
         cv2.polylines(height_frame, [roi_points_height], isClosed=True, color=(0,255,0), thickness=2)
         h_text=f"H: {current_h:.2f}m"; d_text=f"D: {current_d:.1f}m"; e_text=f"Exist: {current_e}"
         cv2.putText(height_frame,h_text,(15,30),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,255,255),2); cv2.putText(height_frame,d_text,(15,60),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,255,255),2); cv2.putText(height_frame,e_text,(15,90),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,255,255),2)
@@ -149,6 +144,6 @@ def run_vision_processing(vision_queue):
 
         if cv2.waitKey(1) & 0xFF == ord('q'): break
         time.sleep(0.1)
-    
+
     cv2.destroyAllWindows()
     print("[Vision] 비전 처리 프로세스를 종료합니다.")
