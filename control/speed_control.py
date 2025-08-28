@@ -1,142 +1,137 @@
-# test_speed_control_fixed.py
+# practice_refined.py
 import time
-import math
-import win32com.client
 from win32com.client import Dispatch, GetActiveObject
 
-# ================== UC-win/Road 연결 및 제어 함수 ==================
 PROGID = "UCwinRoad.F8ApplicationServicesProxy"
+SCENARIO_INDEX = 0
 
-def attach_or_launch():
+TARGET_KMH = 100.0      # 최종 목표 속도
+POLL_DT = 0.05        # 50ms 주기 (AI의 판단보다 빠르게 덮어쓰기 위한 설정)
+FORCE_SEC = 6.0       # 최대 강제 제어 시간
+
+def attach():
     """실행 중인 UC-win/Road에 연결하거나 새로 실행합니다."""
     try:
         return GetActiveObject(PROGID)
     except:
         return Dispatch(PROGID)
 
-def restart_scenario(sim, proj, idx=0):
-    """시나리오를 정지하고 다시 시작합니다."""
+def start_scenario(sim_core, proj, idx=SCENARIO_INDEX):
+    """시나리오를 다시 시작합니다."""
     try:
-        if hasattr(sim, "StopScenario"):
-            sim.StopScenario()
-            time.sleep(0.5)
-    except Exception:
+        if hasattr(sim_core, "StopAllScenarios"):
+            sim_core.StopAllScenarios()
+            time.sleep(0.3)
+    except:
         pass
     sc = proj.Scenario(idx)
-    sim.StartScenario(sc)
-    time.sleep(1.0)
+    sim_core.StartScenario(sc)
+    time.sleep(0.8)
+    print(">> 시나리오 시작")
 
-# ================== 유틸리티 및 계산 함수 ==================
-def kmh_to_mps(v): return v / 3.6
-def mps_to_kmh(v): return v * 3.6
-
-def _vec3(v):
-    """COM 객체의 3차원 벡터를 Python 튜플로 변환합니다."""
-    for names in (("X", "Y", "Z"), ("x", "y", "z")):
-        if all(hasattr(v, n) for n in names):
-            return float(getattr(v, names[0])), float(getattr(v, names[1])), float(getattr(v, names[2]))
-    for m in ("Item", "get_Item", "GetAt", "Get"):
-        if hasattr(v, m):
-            f = getattr(v, m)
-            return float(f(0)), float(f(1)), float(f(2))
-    seq = list(v)
-    return float(seq[0]), float(seq[1]), float(seq[2])
-
-def get_current_speed_kmh(drv):
-    """현재 차량의 속도를 km/h 단위로 가져옵니다."""
-    c = drv.CurrentCar
-    if c is None: return 0.0
+def read_speed_kmh(car):
+    """차량의 현재 속도를 km/h 단위로 읽어옵니다."""
     try:
-        sv = c.SpeedVector(0)
-    except TypeError:
-        sv = c.SpeedVector()
-    vx, vy, vz = _vec3(sv)
-    v_mps = (vx**2 + vy**2 + vz**2)**0.5
-    return mps_to_kmh(v_mps)
-
-# ▼▼▼▼▼ [핵심 수정 부분] ▼▼▼▼▼
-def set_ai_target_speed_kmh(drv, v_kmh):
-    """차량 AI의 목표 주행 속도(SpeedLimit)를 '속성'으로 직접 설정합니다."""
-    try:
-        target_v_mps = kmh_to_mps(v_kmh)
-        # SetSpeedLimit() 호출이 아닌 SpeedLimit 속성에 직접 값을 할당합니다.
-        drv.SpeedLimit = target_v_mps
-    except Exception as e:
-        print(f"[Error] SpeedLimit 속성 설정 실패: {e}")
-# ▲▲▲▲▲ [핵심 수정 부분] ▲▲▲▲▲
-
-# ================== 메인 테스트 로직 ==================
-def run_speed_test():
-    """가속 및 감속을 반복적으로 테스트하는 메인 함수입니다."""
-    print("[Test] 가감속 제어 테스트 스크립트 시작")
-
-    # === 테스트 파라미터 ===
-    DECEL_AMOUNT_KMH = 30
-    ACCEL_AMOUNT_KMH = 50
-    SPEED_TOLERANCE_KMH = 2.0
-    INITIAL_SPEED_KMH = 80
-    
-    # === UC-win/Road 연결 ===
-    try:
-        ucwin = attach_or_launch()
-        sim = ucwin.SimulationCore
-        proj = ucwin.Project
-        driver = sim.TrafficSimulation.Driver
-        
-        print("[Test] 시나리오를 다시 시작합니다...")
-        restart_scenario(sim, proj, 0)
-        
-        car = None
-        t0 = time.time()
-        while car is None and time.time() - t0 < 15.0:
-            car = driver.CurrentCar
-            if car is None: time.sleep(0.2)
-        if car is None: raise RuntimeError("차량 핸들을 가져오지 못했습니다.")
-        
-        print(f"[Test] UC-win/Road 연결 및 차량 핸들 확보 완료.")
-    except Exception as e:
-        print(f"[Test] UC-win/Road 연결 실패: {e}")
-        return
-
-    current_mode = "START"
-    target_speed_kmh = INITIAL_SPEED_KMH
-
-    while True:
+        # 가장 기본적인 속도 읽기 방법 (km/h 단위)
+        return float(car.Speed(1))
+    except:
         try:
-            current_speed_kmh = get_current_speed_kmh(driver)
-            
-            set_ai_target_speed_kmh(driver, target_speed_kmh)
-            
-            print(f"[Test] 모드: {current_mode} | 현재 속도: {current_speed_kmh:.1f} km/h | 목표 속도: {target_speed_kmh:.1f} km/h", end='\r')
+            # m/s 단위로 반환될 경우 변환
+            return float(car.Speed()) * 3.6
+        except:
+            # 위 방법들이 모두 실패할 경우, 거리 변화량으로 속도 추정
+            s0 = float(car.DistanceAlongRoad)
+            t0 = time.time()
+            time.sleep(0.04)
+            s1 = float(car.DistanceAlongRoad); t1 = time.time()
+            v_ms = max(0.0, (s1 - s0) / max(1e-6, (t1 - t0)))
+            return v_ms * 3.6
 
-            if abs(current_speed_kmh - target_speed_kmh) < SPEED_TOLERANCE_KMH:
-                print("\n" + "="*80)
-                print(f"[Test] 목표 속도 {target_speed_kmh:.1f} km/h 도달 성공!")
-                
-                if current_mode == "START" or current_mode == "ACCELERATING":
-                    current_mode = "DECELERATING"
-                    new_target_speed = get_current_speed_kmh(driver) - DECEL_AMOUNT_KMH
-                    target_speed_kmh = max(10, new_target_speed) # 최소 속도를 10으로 유지
-                    print(f"[Test] 다음 단계: 감속을 시작합니다. (목표: {target_speed_kmh:.1f} km/h)")
-                
-                elif current_mode == "DECELERATING":
-                    current_mode = "ACCELERATING"
-                    target_speed_kmh = get_current_speed_kmh(driver) + ACCEL_AMOUNT_KMH
-                    print(f"[Test] 다음 단계: 가속을 시작합니다. (목표: {target_speed_kmh:.1f} km/h)")
-                
-                print("="*80)
-                time.sleep(2)
-            
-            time.sleep(0.1)
+def can_set(prop_setter):
+    """해당 속성을 설정할 수 있는지 테스트하는 함수."""
+    try:
+        prop_setter()
+        return True
+    except:
+        return False
 
-        except KeyboardInterrupt:
-            print("\n[Test] 테스트를 중단합니다.")
-            # 테스트 종료 시, 차량이 계속 주행하도록 적절한 속도를 설정해주는 것이 좋습니다.
-            set_ai_target_speed_kmh(driver, 50)
+def hard_takeover_and_brake(car, target_kmh):
+    """
+    사용 가능한 모든 제어 채널을 통해 고주기로 강제 제동을 시도합니다.
+    AI의 덮어쓰기 로직에 대항하여 계속해서 제어 값을 강제로 설정합니다.
+    """
+    # 제어 가능한 채널이 있는지 한번만 확인
+    has_throttle = can_set(lambda: setattr(car, "Throttle", 0.0))
+    has_brake = can_set(lambda: setattr(car, "Brake", 1.0))
+    has_pbrake = can_set(lambda: setattr(car, "ParkingBrake", True))
+    has_engine = can_set(lambda: setattr(car, "EngineOn", False))
+
+    print(f"사용 가능한 제어 채널: Throttle={has_throttle}, Brake={has_brake}, ParkingBrake={has_pbrake}, EngineOn={has_engine}")
+    print(f"최대 {FORCE_SEC:.1f}초 동안 강제 제동을 시작합니다...")
+
+    t0 = time.time()
+    hit_target = False
+    while time.time() - t0 < FORCE_SEC:
+        # 확인된 채널에 대해서만 반복적으로 강제 제어 명령 전송
+        try:
+            if has_throttle: car.Throttle = 0.0
+            if has_brake: car.Brake = 1.0
+            if has_pbrake: car.ParkingBrake = True
+            if has_engine: car.EngineOn = False
+        except Exception:
+            # 루프 중 COM 오류가 발생해도 중단되지 않도록 방지
+            pass
+
+        spd = read_speed_kmh(car)
+        print(f"[강제 제어 중] 현재 속도={spd:.1f} km/h (목표: {target_kmh:.0f} km/h)", end='\r')
+
+        # 목표 속도에 도달하면 루프 종료
+        if spd <= target_kmh + 0.5:
+            hit_target = True
+            print("\n[성공] 강제 제어로 목표 속도에 도달했습니다.")
             break
-        except Exception as e:
-            print(f"\n[Test] 루프 중 오류 발생: {e}")
-            break
 
-if __name__ == '__main__':
-    run_speed_test()
+        time.sleep(POLL_DT)
+
+    # 강제 제어 루프 종료 후, 차량 상태를 정상으로 복구 시도
+    print("강제 제어 종료. 차량 상태를 복구합니다.")
+    try:
+        if has_brake: car.Brake = 0.0
+        if has_pbrake: car.ParkingBrake = False
+        if has_engine: car.EngineOn = True
+    except Exception:
+        pass
+
+    return hit_target
+
+def main():
+    """메인 실행 함수"""
+    sim = attach()
+    proj = sim.Project
+    sim_core = sim.SimulationCore
+
+    try:
+        start_scenario(sim_core, proj, SCENARIO_INDEX)
+    except Exception as e:
+        print(f"시나리오 자동 시작 실패: {e}")
+
+    car = sim_core.TrafficSimulation.Driver.CurrentCar
+
+    try:
+        start_speed = read_speed_kmh(car)
+        print(f"시작 속도: {start_speed:.1f} km/h")
+    except Exception as e:
+        print(f"시작 속도 읽기 실패: {e}")
+
+    # Plan-B 없이 직접 제어만 실행
+    hard_takeover_and_brake(car, TARGET_KMH)
+
+    try:
+        final_speed = read_speed_kmh(car)
+        print(f"최종 속도: {final_speed:.1f} km/h")
+        print("AI가 제어권을 되찾아 원래 속도로 복귀를 시도할 것입니다.")
+    except Exception:
+        pass
+
+if __name__ == "__main__":
+    main()

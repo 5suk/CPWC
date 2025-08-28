@@ -20,8 +20,6 @@ def main():
     vision_to_control_queue = multiprocessing.Queue()
 
     # 각 프로세스 생성
-    # target: 각 프로세스가 실행할 함수
-    # args: 함수에 전달할 인자 (큐 객체)
     vision_process = multiprocessing.Process(target=run_vision_processing, args=(vision_to_control_queue,))
     control_process = multiprocessing.Process(target=run_control_simulation, args=(vision_to_control_queue,))
 
@@ -38,7 +36,6 @@ def main():
         control_process.join()
     except KeyboardInterrupt:
         print("\n[Main] 사용자에 의해 프로그램 종료 중...")
-        # 자식 프로세스들에게 종료 신호 전달
         if vision_process.is_alive():
             vision_process.terminate()
         if control_process.is_alive():
