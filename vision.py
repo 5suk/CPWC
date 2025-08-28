@@ -71,7 +71,8 @@ def analyze_height_map(frame, roi_mask, roi_settings, height_settings):
     return estimated_height, estimated_distance
 
 def run_vision_processing(vision_queue):
-    #print("[Vision] 비전 처리 프로세스를 시작합니다.")
+    print("[Vision] 비전 처리 프로세스를 시작합니다.")
+
     REGULAR_WINDOW_TITLE = "경관 위치 <top>"; HEIGHT_WINDOW_TITLE = "경관 위치 <test>"
     ROI_SETTINGS_HEIGHT = {'top_y':0.6,'bottom_y':0.98,'top_w':0.25,'bottom_w':0.95}
     ROI_SETTINGS_PATTERN = {'top_y':0.4,'bottom_y':0.98,'top_w':0.4,'bottom_w':1.0}
@@ -85,7 +86,7 @@ def run_vision_processing(vision_queue):
     
     CONFIRM_FRAME_COUNT = 2
     detection_history = collections.deque(maxlen=CONFIRM_FRAME_COUNT)
-    last_sent_type = None
+    confirmed_type = "None"; last_printed_type = None
     
     while True:
         regular_frame = capture_window_by_title(REGULAR_WINDOW_TITLE); height_frame = capture_window_by_title(HEIGHT_WINDOW_TITLE)
@@ -107,23 +108,38 @@ def run_vision_processing(vision_queue):
             else: current_type = "C"
 
         detection_history.append(current_type)
-        
-        confirmed_type = "None"
         if len(detection_history) == CONFIRM_FRAME_COUNT and len(set(detection_history)) == 1:
             confirmed_type = detection_history[0]
-
-        if confirmed_type != "None" and confirmed_type != last_sent_type:
-            # 로그 형식 수정
-            #print(f"\n[Vision][Confirmed]H:{current_h:.2f}m|D:{current_d:.1f}m|E:{current_e}|P:{current_p}|T:{confirmed_type}")
-            data_packet = {'type': confirmed_type, 'height_m': current_h, 'distance_m': current_d}
+        if current_type == "None":
+            confirmed_type = "None"; detection_history.clear()
+        
+        if confirmed_type != "None" and confirmed_type != last_printed_type:
+            print(f"[Vision][Confirmed]H:{current_h:.2f}m|D:{current_d:.1f}m|E:{current_e}|P:{current_p}|T:{confirmed_type}")
+            last_printed_type = confirmed_type
+            
+            data_packet = {
+                'type': confirmed_type,
+                'height_m': current_h,
+                'distance_m': current_d,
+            }
             try:
                 vision_queue.put_nowait(data_packet)
-                #print("[Vision] Control 프로세스로 전송 완료.")
-            except queue.Full: pass
-            last_sent_type = confirmed_type
-        
+                print("[Vision] Control 프로세스로 전송 완료.")
+            except queue.Full:
+                pass
+
         elif confirmed_type == "None":
-            last_sent_type = "None"
+            last_printed_type = "None"
+        
+        cv2.polylines(height_frame, [roi_points_height], isClosed=True, color=(0,255,0), thickness=2)
+        h_text=f"H: {current_h:.2f}m"; d_text=f"D: {current_d:.1f}m"; e_text=f"Exist: {current_e}"
+        cv2.putText(height_frame,h_text,(15,30),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,255,255),2); cv2.putText(height_frame,d_text,(15,60),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,255,255),2); cv2.putText(height_frame,e_text,(15,90),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,255,255),2)
+        cv2.imshow("Height & Distance Analysis", height_frame)
+        cv2.polylines(regular_frame, [roi_points_pattern], isClosed=True, color=(0,255,0), thickness=2)
+        p_text = f"Pattern: {current_p}"; r_text = f"Confirmed: {confirmed_type}"
+        cv2.putText(regular_frame, p_text, (15,30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
+        cv2.putText(regular_frame, r_text, (15,60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
+        cv2.imshow("Pattern Recognition", regular_frame)
         
         if cv2.waitKey(1) & 0xFF == ord('q'): break
         time.sleep(0.1)
