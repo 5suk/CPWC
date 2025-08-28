@@ -4,6 +4,7 @@ import math
 import queue
 import numpy as np
 from win32com.client import Dispatch, GetActiveObject
+from logger import print_at # 새로 만든 print_at 함수 import
 
 # ================== UC-win/Road 연결 및 기본 함수 ==================
 PROGID = "UCwinRoad.F8ApplicationServicesProxy"
@@ -105,12 +106,14 @@ def execute_control(car, target_speed_kmh, pwm, poll_dt):
     계산된 고정 PWM 값으로 목표 속도에 도달할 때까지 차량을 제어합니다.
     PWM 원리를 이용하여 ParkingBrake를 제어합니다.
     """
-    print("============차량감속 시작============")
+    print("\n============차량감속 시작============")
     
     start_time = time.time()
     while time.time() - start_time < 10.0:
         current_speed_kmh = read_speed_kmh(car)
-        print(f"[Control] 현재속도: {current_speed_kmh:.2f}km/h | ts:{target_speed_kmh:.2f}km/h| PWM:{pwm:.2f}", end='\r')
+        # [수정] print_at 사용
+        message = f"현재속도: {current_speed_kmh:.2f}km/h | ts:{target_speed_kmh:.2f}km/h| PWM:{pwm:.2f}"
+        print_at('CONTROL', message)
 
         if current_speed_kmh <= target_speed_kmh:
             print(f"\n[Control] 목표 속도({target_speed_kmh:.2f}km/h) 도달 성공.")
@@ -133,7 +136,6 @@ def execute_control(car, target_speed_kmh, pwm, poll_dt):
 
         except Exception:
             # 루프 중 COM 오류 발생 시 안전하게 제동을 해제하고 빠져나옴
-            is_controlling = False
             break
             
     try:
@@ -150,7 +152,6 @@ def run_control_simulation(vision_queue):
 
     # ===튜닝 파라미터===
     POLL_DT = 0.15
-    # CAL_GAIN: RMS 계산 보정 계수. 값을 낮출수록 RMS가 낮게 계산됩니다.
     CAL_GAIN = 0.050
     COMFORT_TARGETS_RMS = {'매우 쾌적함': 0.315, '쾌적함': 0.5, '보통': 0.8}
     TARGET_SPEED_MARGIN_KMH = 3.0
@@ -221,7 +222,9 @@ def run_control_simulation(vision_queue):
 
             except queue.Empty:
                 current_speed = read_speed_kmh(car)
-                print(f"[Control] 현재 속도: {current_speed:.1f} km/h | Vision 신호 대기 중...", end='\r')
+                # [수정] print_at 사용
+                message = f"현재 속도: {current_speed:.1f} km/h | Vision 신호 대기 중..."
+                print_at('CONTROL', message)
             
             except Exception as e:
                 print(f"\n[Control] 제어 중 오류 발생: {e}")
