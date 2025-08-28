@@ -66,12 +66,12 @@ def estimate_min_speed_kmh(current_speed_kmh):
     제공된 테스트 데이터 기반, 현재 속도에 따른 예상 최저 도달 속도(mS)를 계산합니다.
     """
     speed_map = {
-        40: np.mean([13.19, 0.79, 3.71]),
-        50: np.mean([24.42, 17.17, 20.84]),
-        60: np.mean([37.08, 41.03, 35.63]),
-        70: np.mean([57.02, 52.70, 53.09]),
-        80: np.mean([63.87, 66.28, 64.04]),
-        90: np.mean([72.35, 70.13, 73.02]),
+        40: np.mean([5.19, 2.79, 3.71]),
+        50: np.mean([21.42, 17.17, 20.84]),
+        60: np.mean([37.08, 39.03, 35.63]),
+        70: np.mean([55.02, 52.70, 53.09]),
+        80: np.mean([63.87, 65.28, 64.04]),
+        90: np.mean([72.35, 70.13, 71.02]),
     }
     
     x_speeds = sorted(speed_map.keys())
@@ -103,6 +103,7 @@ def calculate_brake_pwm(current_speed_kmh):
 def execute_control(car, target_speed_kmh, pwm, poll_dt):
     """
     계산된 고정 PWM 값으로 목표 속도에 도달할 때까지 차량을 제어합니다.
+    PWM 원리를 이용하여 ParkingBrake를 제어합니다.
     """
     print("============차량감속 시작============")
     
@@ -114,16 +115,27 @@ def execute_control(car, target_speed_kmh, pwm, poll_dt):
         if current_speed_kmh <= target_speed_kmh:
             print(f"\n[Control] 목표 속도({target_speed_kmh:.2f}km/h) 도달 성공.")
             break
-            
-        try:
-            car.Throttle = 0.0
-            car.Brake = pwm
-            car.ParkingBrake = True
-        except Exception:
-            pass
-            
-        time.sleep(poll_dt)
         
+        # PWM 제어 로직 적용
+        try:
+            on_time = poll_dt * pwm
+            off_time = poll_dt * (1.0 - pwm)
+
+            car.Throttle = 0.0
+            
+            if on_time > 0:
+                car.ParkingBrake = True
+                time.sleep(on_time)
+            
+            if off_time > 0:
+                car.ParkingBrake = False
+                time.sleep(off_time)
+
+        except Exception:
+            # 루프 중 COM 오류 발생 시 안전하게 제동을 해제하고 빠져나옴
+            is_controlling = False
+            break
+            
     try:
         car.Brake = 0.0
         car.ParkingBrake = False
@@ -137,9 +149,9 @@ def run_control_simulation(vision_queue):
     print("[Control] 제어 시뮬레이션 프로세스 시작")
 
     # ===튜닝 파라미터===
-    POLL_DT = 0.2
+    POLL_DT = 0.15
     # CAL_GAIN: RMS 계산 보정 계수. 값을 낮출수록 RMS가 낮게 계산됩니다.
-    CAL_GAIN = 0.080 # 기존 0.124에서 하향 조정
+    CAL_GAIN = 0.050
     COMFORT_TARGETS_RMS = {'매우 쾌적함': 0.315, '쾌적함': 0.5, '보통': 0.8}
     TARGET_SPEED_MARGIN_KMH = 3.0
 
@@ -189,7 +201,6 @@ def run_control_simulation(vision_queue):
                     print(f"[Control]D:{dist_m:.1f}m|H:{h_m*100:.1f}cm|S:{current_speed_kmh:.2f}km/h|mS:{mS_kmh:.2f}km/h|eR:{eR_rms:.2f}|승차감:{comfort_level}")
 
                     # 4단계: tS 설정
-                    # 1. '불쾌' 또는 '매우 불쾌'일 경우, 안전을 위해 즉시 mS를 목표 속도로 설정
                     if comfort_level in ["불쾌함", "매우 불쾌함"]:
                         tS_kmh = mS_kmh
                         print(f"[Control] 승차감 '불쾌' 이상 감지. 안전을 위해 목표 속도를 {tS_kmh:.2f}km/h로 설정합니다.")
@@ -216,4 +227,5 @@ def run_control_simulation(vision_queue):
                 print(f"\n[Control] 제어 중 오류 발생: {e}")
                 is_controlling = False
         
-        time.sleep(POLL_DT)
+        # 메인 루프의 대기 시간 (is_controlling이 아닐 때만 적용)
+        time.sleep(0.1)
