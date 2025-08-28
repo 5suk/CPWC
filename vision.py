@@ -1,6 +1,4 @@
 # vision.py
-
-# ... (상단 capture_window_by_title 등 모든 헬퍼 함수는 이전과 동일) ...
 import cv2
 import numpy as np
 import win32gui, win32ui, win32con
@@ -71,12 +69,9 @@ def analyze_height_map(frame, roi_mask, roi_settings, height_settings):
                     y_points = sorted(dist_calib.keys()); dist_points = [dist_calib[y_val] for y_val in y_points]
                     estimated_distance = float(np.interp(yb_norm,y_points,dist_points))
     return estimated_height, estimated_distance
-# --- (여기까지 동일) ---
 
 def run_vision_processing(vision_queue):
-    print("[Vision] 비전 처리 프로세스를 시작합니다.")
-
-    # ... (설정값은 이전과 동일) ...
+    #print("[Vision] 비전 처리 프로세스를 시작합니다.")
     REGULAR_WINDOW_TITLE = "경관 위치 <top>"; HEIGHT_WINDOW_TITLE = "경관 위치 <test>"
     ROI_SETTINGS_HEIGHT = {'top_y':0.6,'bottom_y':0.98,'top_w':0.25,'bottom_w':0.95}
     ROI_SETTINGS_PATTERN = {'top_y':0.4,'bottom_y':0.98,'top_w':0.4,'bottom_w':1.0}
@@ -90,13 +85,11 @@ def run_vision_processing(vision_queue):
     
     CONFIRM_FRAME_COUNT = 2
     detection_history = collections.deque(maxlen=CONFIRM_FRAME_COUNT)
-    confirmed_type = "None"; last_printed_type = None
+    last_sent_type = None
     
     while True:
-        # ... (상단 루프 로직은 이전과 동일) ...
         regular_frame = capture_window_by_title(REGULAR_WINDOW_TITLE); height_frame = capture_window_by_title(HEIGHT_WINDOW_TITLE)
         if regular_frame is None or height_frame is None:
-            print("[Vision] 윈도우를 찾을 수 없습니다. 1초 후 재시도합니다.", end='\r')
             time.sleep(1); continue
         
         roi_points_pattern, road_mask_pattern = get_road_roi(regular_frame, ROI_SETTINGS_PATTERN)
@@ -114,44 +107,25 @@ def run_vision_processing(vision_queue):
             else: current_type = "C"
 
         detection_history.append(current_type)
+        
+        confirmed_type = "None"
         if len(detection_history) == CONFIRM_FRAME_COUNT and len(set(detection_history)) == 1:
             confirmed_type = detection_history[0]
-        if current_type == "None":
-            confirmed_type = "None"; detection_history.clear()
-        
-        if confirmed_type != "None" and confirmed_type != last_printed_type:
-            # 수정된 출력 형식
-            print(f"[Vision][Confirmed]H:{current_h:.2f}m|D:{current_d:.1f}m|E:{current_e}|P:{current_p}|T:{confirmed_type}")
-            last_printed_type = confirmed_type
-            
-            data_packet = {
-                'type': confirmed_type,
-                'height_m': current_h,
-                'distance_m': current_d,
-            }
+
+        if confirmed_type != "None" and confirmed_type != last_sent_type:
+            # 로그 형식 수정
+            #print(f"\n[Vision][Confirmed]H:{current_h:.2f}m|D:{current_d:.1f}m|E:{current_e}|P:{current_p}|T:{confirmed_type}")
+            data_packet = {'type': confirmed_type, 'height_m': current_h, 'distance_m': current_d}
             try:
                 vision_queue.put_nowait(data_packet)
-                # 수정된 출력 형식
-                print("[Vision] Control 프로세스로 전송 완료.")
-            except queue.Full:
-                print("[Vision] 경고: Control 큐가 가득 차 데이터를 보낼 수 없습니다.")
-
-        elif confirmed_type == "None":
-            last_printed_type = "None"
+                #print("[Vision] Control 프로세스로 전송 완료.")
+            except queue.Full: pass
+            last_sent_type = confirmed_type
         
-        # ... (하단 시각화 로직은 이전과 동일) ...
-        cv2.polylines(height_frame, [roi_points_height], isClosed=True, color=(0,255,0), thickness=2)
-        h_text=f"H: {current_h:.2f}m"; d_text=f"D: {current_d:.1f}m"; e_text=f"Exist: {current_e}"
-        cv2.putText(height_frame,h_text,(15,30),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,255,255),2); cv2.putText(height_frame,d_text,(15,60),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,255,255),2); cv2.putText(height_frame,e_text,(15,90),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,255,255),2)
-        cv2.imshow("Height & Distance Analysis", height_frame)
-        cv2.polylines(regular_frame, [roi_points_pattern], isClosed=True, color=(0,255,0), thickness=2)
-        p_text = f"Pattern: {current_p}"; r_text = f"Confirmed: {confirmed_type}"
-        cv2.putText(regular_frame, p_text, (15,30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
-        cv2.putText(regular_frame, r_text, (15,60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
-        cv2.imshow("Pattern Recognition", regular_frame)
+        elif confirmed_type == "None":
+            last_sent_type = "None"
         
         if cv2.waitKey(1) & 0xFF == ord('q'): break
         time.sleep(0.1)
     
     cv2.destroyAllWindows()
-    print("[Vision] 비전 처리 프로세스를 종료합니다.")

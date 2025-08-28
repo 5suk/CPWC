@@ -5,7 +5,7 @@ from win32com.client import Dispatch, GetActiveObject
 PROGID = "UCwinRoad.F8ApplicationServicesProxy"
 SCENARIO_INDEX = 0
 
-TARGET_KMH = 100.0      # 최종 목표 속도
+TARGET_KMH = 3.0      # 최종 목표 속도
 POLL_DT = 0.05        # 50ms 주기 (AI의 판단보다 빠르게 덮어쓰기 위한 설정)
 FORCE_SEC = 6.0       # 최대 강제 제어 시간
 
@@ -75,7 +75,7 @@ def hard_takeover_and_brake(car, target_kmh):
         # 확인된 채널에 대해서만 반복적으로 강제 제어 명령 전송
         try:
             if has_throttle: car.Throttle = 0.0
-            if has_brake: car.Brake = 1.0
+            if has_brake: car.Brake = 0.0
             if has_pbrake: car.ParkingBrake = True
             if has_engine: car.EngineOn = False
         except Exception:
