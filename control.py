@@ -6,11 +6,12 @@ import numpy as np
 from win32com.client import Dispatch, GetActiveObject
 from logger import print_at
 
-# ================== ⚙️ 튜닝 파라미터 ==================
+# ================== 튜닝 파라미터 ==================
 # 제동 강도(PWM) 계산 시 각 요소의 가중치
 # 두 값의 합이 1.0이 되도록 조절하는 것을 추천합니다.
 PWM_WEIGHT_SPEED_DIFF = 0.7  # 속도 차이의 영향력 (클수록 속도를 빨리 줄이려 함)
-PWM_WEIGHT_DISTANCE = 0.3    # 남은 거리의 영향력 (클수록 가까워졌을 때 급하게 제동)
+PWM_WEIGHT_DISTANCE = 0.7    # 남은 거리의 영향력 (클수록 가까워졌을 때 급하게 제동)
+PWM_WEIGHT = 1.2
 # =======================================================
 
 # (다른 함수들은 이전과 동일합니다)
@@ -87,8 +88,8 @@ def calculate_brake_pwm(current_speed_kmh, target_speed_kmh, distance_to_bump_m)
 
     # 3. 가중치를 적용하여 최종 PWM 계산
     # 속도차가 많이 나거나, 거리가 가까울수록 강하게 제동
-    raw_pwm = (PWM_WEIGHT_SPEED_DIFF * speed_diff_factor) + (PWM_WEIGHT_DISTANCE * distance_factor)
-    
+    raw_pwm = PWM_WEIGHT*((PWM_WEIGHT_SPEED_DIFF * speed_diff_factor) + (PWM_WEIGHT_DISTANCE * distance_factor))
+
     # 4. 최소/최대 제동 강도 제한
     # 최소 50%의 제동은 하되, 최대 100%를 넘지 않도록 조정
     final_pwm = max(0.5, min(1.0, raw_pwm))
