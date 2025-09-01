@@ -4,51 +4,63 @@ import sys
 from vision import run_vision_processing
 from control import run_control_simulation
 from V2V import run_v2v_simulation
+from evaluate import run_evaluate_node
 
-# 윈도우에서 multiprocessing 사용 시 필수 설정
 if sys.platform == "win32":
     multiprocessing.freeze_support()
 
 def main():
-    """
-    메인 프로세스: Vision, Control, V2V 프로세스를 생성하고 관리합니다.
-    """
     print("[Main] 프로그램 시작")
 
+    # Vision → Control
     vision_to_control_queue = multiprocessing.Queue()
+    # Vision → Evaluate
+    vision_to_evaluate_queue = multiprocessing.Queue()
+    # Control ↔ Evaluate (양방향)
+    control_to_evaluate_queue = multiprocessing.Queue()
+    evaluate_to_control_queue = multiprocessing.Queue()
+    # V2V → Vision (현재 미사용)
     v2v_to_vision_queue = multiprocessing.Queue()
-    forward_vehicle_distance = multiprocessing.Value('d', 999.9)
 
+    # Vision
     vision_process = multiprocessing.Process(
-        target=run_vision_processing, 
-        args=(vision_to_control_queue, v2v_to_vision_queue, forward_vehicle_distance)
+        target=run_vision_processing,
+        args=(vision_to_control_queue, vision_to_evaluate_queue)
     )
+    # Control
     control_process = multiprocessing.Process(
-        target=run_control_simulation, 
-        args=(vision_to_control_queue,)
+        target=run_control_simulation,
+        args=(vision_to_control_queue, control_to_evaluate_queue, evaluate_to_control_queue)
     )
+    # V2V
     v2v_process = multiprocessing.Process(
-        target=run_v2v_simulation, 
-        args=(v2v_to_vision_queue, forward_vehicle_distance)
+        target=run_v2v_simulation,
+        args=(v2v_to_vision_queue,)
+    )
+    # Evaluate
+    evaluate_process = multiprocessing.Process(
+        target=run_evaluate_node,
+        args=(vision_to_evaluate_queue, control_to_evaluate_queue, evaluate_to_control_queue)
     )
 
-    processes = [vision_process, control_process, v2v_process]
-    process_names = ["Vision", "Control", "V2V"]
-
-    for process, name in zip(processes, process_names):
-        process.start()
-        print(f"[Main] {name} 프로세스 시작됨")
+    vision_process.start(); print("[Main] Vision 프로세스 시작됨")
+    control_process.start(); print("[Main] Control 프로세스 시작됨")
+    v2v_process.start(); print("[Main] V2V 프로세스 시작됨")
+    evaluate_process.start(); print("[Main] Evaluate 프로세스 시작됨")
 
     try:
-        for process in processes:
-            process.join()
+        vision_process.join()
+        control_process.join()
+        v2v_process.join()
+        evaluate_process.join()
     except KeyboardInterrupt:
-        print("\n[Main] 사용자에 의해 프로그램 종료 중...")
-        for process in processes:
-            if process.is_alive():
-                process.terminate()
-                process.join()
-        print("[Main] 모든 프로세스 종료 완료.")
+        print("\n[Main] 사용자 종료 요청. 모든 프로세스 종료 중...")
+        for p in [vision_process, control_process, v2v_process, evaluate_process]:
+            if p.is_alive():
+                p.terminate()
+        for p in [vision_process, control_process, v2v_process, evaluate_process]:
+            p.join()
+        print("[Main] 종료 완료.")
 
 if __name__ == '__main__':
     main()
