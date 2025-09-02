@@ -5,6 +5,12 @@ import win32gui, win32ui, win32con
 import time
 import collections
 import queue
+from logger import print_at
+
+def get_bump_width(bump_type_str):
+    if 'a' in bump_type_str.lower(): return 3.6
+    if 'b' in bump_type_str.lower(): return 1.8
+    return 3.0
 
 def capture_window_by_title(window_title):
     hwnd = win32gui.FindWindow(None, window_title)
@@ -13,7 +19,7 @@ def capture_window_by_title(window_title):
     w, h = right - left, bot - top
     if w < 2 or h < 2: return None
     hwndDC = win32gui.GetWindowDC(hwnd)
-    mfcDC = win32ui.CreateDCFromHandle(hwndDC)
+    mfcDC  = win32ui.CreateDCFromHandle(hwndDC)
     saveDC = mfcDC.CreateCompatibleDC()
     saveBitMap = win32ui.CreateBitmap()
     saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
@@ -70,9 +76,7 @@ def analyze_height_map(frame, roi_mask, roi_settings, height_settings):
                     estimated_distance = float(np.interp(yb_norm,y_points,dist_points))
     return estimated_height, estimated_distance
 
-def run_vision_processing(control_queue, evaluate_queue):
-    print("[Vision] 비전 처리 프로세스를 시작합니다.")
-
+def run_vision_processing(vision_to_control_queue, v2v_to_vision_queue, forward_vehicle_distance):
     REGULAR_WINDOW_TITLE = "경관 위치 <top>"; HEIGHT_WINDOW_TITLE = "경관 위치 <test>"
     ROI_SETTINGS_HEIGHT = {'top_y':0.6,'bottom_y':0.98,'top_w':0.25,'bottom_w':0.95}
     ROI_SETTINGS_PATTERN = {'top_y':0.4,'bottom_y':0.98,'top_w':0.4,'bottom_w':1.0}
@@ -83,77 +87,69 @@ def run_vision_processing(control_queue, evaluate_queue):
     }
     PATTERN_SETTINGS = {'yellow_lower':[20,80,80],'yellow_upper':[35,255,255],'min_pixel_area':500}
     CLASSIFICATION_THRESHOLDS = {'height_exist':0.04, 'height_A_max':0.13}
-    
     CONFIRM_FRAME_COUNT = 2
+    
     detection_history = collections.deque(maxlen=CONFIRM_FRAME_COUNT)
-    confirmed_type = "None"; last_printed_type = None
+    confirmed_type = "None"; last_sent_type = None
     
     while True:
-        regular_frame = capture_window_by_title(REGULAR_WINDOW_TITLE); height_frame = capture_window_by_title(HEIGHT_WINDOW_TITLE)
-        if regular_frame is None or height_frame is None:
-            time.sleep(1); continue
-        
-        roi_points_pattern, road_mask_pattern = get_road_roi(regular_frame, ROI_SETTINGS_PATTERN)
-        roi_points_height, road_mask_height = get_road_roi(height_frame, ROI_SETTINGS_HEIGHT)
-        current_p = detect_pattern(regular_frame, road_mask_pattern, PATTERN_SETTINGS)
-        current_h, current_d = analyze_height_map(height_frame, road_mask_height, ROI_SETTINGS_HEIGHT, HEIGHT_SETTINGS)
-        current_e = current_h >= HEIGHT_SETTINGS['existence_threshold_m']
-
-        current_type = "None"; h_A_max = CLASSIFICATION_THRESHOLDS['height_A_max']
-        if not current_e: current_type = "D" if current_p else "None"
+        # === [추가] 전방 차량 거리 실시간 로그 출력 ===
+        fwd_dist = forward_vehicle_distance.value
+        if fwd_dist < 50.0:
+            print_at('FORWARD_VEHICLE', f"전방 차량 거리: {fwd_dist:.1f}m")
         else:
-            if current_p:
-                if current_h <= h_A_max: current_type = "A"
-                else: current_type = "B"
-            else: current_type = "C"
+            print_at('FORWARD_VEHICLE', "전방 차량 거리: None")
+        # ============================================
 
-        detection_history.append(current_type)
-        if len(detection_history) == CONFIRM_FRAME_COUNT and len(set(detection_history)) == 1:
-            confirmed_type = detection_history[0]
-        if current_type == "None":
-            confirmed_type = "None"; detection_history.clear()
-        
-        if confirmed_type != "None" and confirmed_type != last_printed_type:
-            print(f"[Vision][Confirmed]H:{current_h:.2f}m|D:{current_d:.1f}m|E:{current_e}|P:{current_p}|T:{confirmed_type}")
-            last_printed_type = confirmed_type
+        is_v2v_mode = (fwd_dist <= 30.0)
+
+        if is_v2v_mode:
+            try:
+                v2v_data = v2v_to_vision_queue.get_nowait()
+                log_msg = f"[V2V] {v2v_data.get('vehicle_name', 'Vehicle')}:{v2v_data['distance_m']:.1f}m"
+                print_at('DETECTION', log_msg)
+                vision_to_control_queue.put_nowait(v2v_data)
+            except queue.Empty:
+                log_msg = f"[V2V] {fwd_dist:.1f}m (Receiving...)"
+                print_at('DETECTION', log_msg)
+        else:
+            regular_frame = capture_window_by_title(REGULAR_WINDOW_TITLE)
+            height_frame = capture_window_by_title(HEIGHT_WINDOW_TITLE)
+            if regular_frame is None or height_frame is None:
+                time.sleep(1); continue
+
+            roi_points_pattern, road_mask_pattern = get_road_roi(regular_frame, ROI_SETTINGS_PATTERN)
+            roi_points_height, road_mask_height = get_road_roi(height_frame, ROI_SETTINGS_HEIGHT)
+            current_p = detect_pattern(regular_frame, road_mask_pattern, PATTERN_SETTINGS)
+            current_h, current_d = analyze_height_map(height_frame, road_mask_height, ROI_SETTINGS_HEIGHT, HEIGHT_SETTINGS)
             
-            # Control로 보낼 데이터
-            data_packet = {
-                'type': confirmed_type,
-                'height_m': current_h,
-                'distance_m': current_d,
-            }
-            try:
-                control_queue.put_nowait(data_packet)
-                print("[Vision] Control 프로세스로 전송 완료.")
-            except queue.Full:
-                pass
+            log_msg = f"[Vision] H:{current_h:.2f}m | D:{current_d:.1f}m | T:{confirmed_type} | P:{current_p}"
+            print_at('DETECTION', log_msg)
 
-            # Evaluate에는 type만 보냄
-            try:
-                evaluate_queue.put_nowait({'type': confirmed_type})
-                print("[Vision] Evaluate 프로세스로 전송 완료.")
-            except queue.Full:
-                pass
-
-        elif confirmed_type == "None":
-            last_printed_type = "None"
-        
-        # 디버깅용 시각화
-        cv2.polylines(height_frame, [roi_points_height], isClosed=True, color=(0,255,0), thickness=2)
-        h_text=f"H: {current_h:.2f}m"; d_text=f"D: {current_d:.1f}m"; e_text=f"Exist: {current_e}"
-        cv2.putText(height_frame,h_text,(15,30),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,255,255),2)
-        cv2.putText(height_frame,d_text,(15,60),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,255,255),2)
-        cv2.putText(height_frame,e_text,(15,90),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,255,255),2)
-        cv2.imshow("Height & Distance Analysis", height_frame)
-
-        cv2.polylines(regular_frame, [roi_points_pattern], isClosed=True, color=(0,255,0), thickness=2)
-        p_text = f"Pattern: {current_p}"; r_text = f"Confirmed: {confirmed_type}"
-        cv2.putText(regular_frame, p_text, (15,30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
-        cv2.putText(regular_frame, r_text, (15,60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
-        cv2.imshow("Pattern Recognition", regular_frame)
-        
-        if cv2.waitKey(1) & 0xFF == ord('q'): break
+            current_e = current_h >= HEIGHT_SETTINGS['existence_threshold_m']
+            current_type_str = "None"; h_A_max = CLASSIFICATION_THRESHOLDS['height_A_max']
+            if not current_e: current_type_str = "D" if current_p else "None"
+            else:
+                if current_p:
+                    if current_h <= h_A_max: current_type_str = "A"
+                    else: current_type_str = "B"
+                else: current_type_str = "C"
+            
+            detection_history.append(current_type_str)
+            if len(detection_history) == CONFIRM_FRAME_COUNT and len(set(detection_history)) == 1:
+                confirmed_type = detection_history[0]
+            if current_type_str == "None":
+                confirmed_type = "None"; detection_history.clear()
+            
+            if confirmed_type != "None" and confirmed_type != last_sent_type:
+                last_sent_type = confirmed_type
+                data_packet = {
+                    'type': confirmed_type, 'height_m': current_h, 
+                    'distance_m': current_d, 'width_m': get_bump_width(confirmed_type),
+                    'source': 'Vision'
+                }
+                try: vision_to_control_queue.put_nowait(data_packet)
+                except queue.Full: pass
+            elif confirmed_type == "None":
+                last_sent_type = None
         time.sleep(0.1)
-    
-    cv2.destroyAllWindows()
