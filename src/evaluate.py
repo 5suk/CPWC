@@ -3,8 +3,6 @@ import math
 import time
 import queue
 import pythoncom
-
-# 변경된 디렉토리 구조에 맞게 import 경로 수정
 from utils.logger import print_at
 from config import config
 
@@ -33,39 +31,39 @@ def run_evaluate_node(control_to_eval_queue, eval_to_control_queue):
             if data.get("msg") != "evaluate_request":
                 continue
 
-            cS = data.get('current_speed')
-            tS = data.get('target_speed')
-            pR = data.get('prediction_RMS')
-            gt_h = data.get('GT_Height')
-            gt_d = data.get('GT_Depth')
-            current_gain = data.get('current_gain')
-            current_pwm_weight = data.get('current_pwm_weight')
+            current_speed = data.get('current_speed')
+            target_speed = data.get('target_speed')
+            prediction_RMS = data.get('prediction_RMS')
+            GT_Height = data.get('GT_Height')
+            GT_Depth = data.get('GT_Depth')
+            current_pR_Calibration = data.get('current_pR_Calibration')
+            current_PWM_Calibration = data.get('current_PWM_Calibration')
 
-            actual_RMS = compute_rms(cS, gt_h, gt_d)
+            actual_RMS = compute_rms(current_speed, GT_Height, GT_Depth)
             comfort_level = classify_rms(actual_RMS)
             
-            result_log = (f"cS:{cS:.1f} | actual_RMS:{actual_RMS:.2f} "
-                          f"(GT_H:{gt_h*100:.1f}cm, GT_Dp:{gt_d:.2f}m) | Comfort: {comfort_level}")
+            result_log = (f"cS:{current_speed:.1f} | aR:{actual_RMS:.2f} "
+                          f"(GT_H:{GT_Height*100:.1f}cm, GT_Dp:{GT_Depth:.2f}m) | Comfort: {comfort_level}")
             print_at('EVALUATE_RESULT', f"[Evaluate] {result_log}")
 
-            er_error = (abs(pR - actual_RMS) / pR) * 100 if pR > 0.01 else 0
-            ts_error = (abs(tS - cS) / tS) * 100 if tS > 0.01 else 0
+            er_error = (abs(prediction_RMS - actual_RMS) / prediction_RMS) * 100 if prediction_RMS > 0.01 else 0
+            ts_error = (abs(target_speed - current_speed) / target_speed) * 100 if target_speed > 0.01 else 0
             accuracy_log = f"pR<>aR 오차: {er_error:.1f}% | tS<>cS 오차: {ts_error:.1f}%"
             print_at('EVALUATE_ACCURACY', f"[Evaluate] {accuracy_log}")
 
-            target_gain = current_gain * (actual_RMS / pR) if pR > 0.01 else current_gain
-            target_pwm_weight = current_pwm_weight * (cS / tS) if tS > 0.01 else current_pwm_weight
+            target_gain = current_pR_Calibration * (actual_RMS / prediction_RMS) if prediction_RMS > 0.01 else current_pR_Calibration
+            target_pwm_weight = current_PWM_Calibration * (current_speed / target_speed) if target_speed > 0.01 else current_PWM_Calibration
 
-            alpha_pr = config.LEARNING_RATE_PR
-            updated_gain = (current_gain * (1 - alpha_pr)) + (target_gain * alpha_pr)
+            alpha_pr = config.LEARNING_RATE_PR_CALIBRATION
+            updated_pR_Calibration = (current_pR_Calibration * (1 - alpha_pr)) + (target_gain * alpha_pr)
 
-            alpha_pwm = config.LEARNING_RATE_PWM
-            updated_pwm_weight = (current_pwm_weight * (1 - alpha_pwm)) + (target_pwm_weight * alpha_pwm)
+            alpha_pwm = config.LEARNING_RATE_PWM_CALIBRATION
+            updated_PWM_Calibration = (current_PWM_Calibration * (1 - alpha_pwm)) + (target_pwm_weight * alpha_pwm)
 
             response_data = {
                 "msg": "final_correction_factors",
-                "updated_gain": updated_gain,
-                "updated_pwm_weight": updated_pwm_weight,
+                "updated_pR_Calibration": updated_pR_Calibration,
+                "updated_PWM_Calibration": updated_PWM_Calibration,
                 "result_log": result_log,
                 "accuracy_log": accuracy_log
             }

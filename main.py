@@ -5,7 +5,6 @@ import time
 import pythoncom
 from win32com.client import Dispatch, GetActiveObject
 
-# 변경된 디렉토리 구조에 맞게 import 경로 수정
 from config import config
 from src.vision import run_vision_processing
 from src.control import run_control_simulation
@@ -46,12 +45,12 @@ if __name__ == '__main__':
     v2v_to_vision_queue = multiprocessing.Queue()
     control_to_eval_queue = multiprocessing.Queue()
     eval_to_control_queue = multiprocessing.Queue()
-    Vehicle_Distance = multiprocessing.Value('d', 999.9)
+    forward_vehicle_distance = multiprocessing.Value('d', 999.9)
 
     processes = [
-        multiprocessing.Process(target=run_vision_processing, args=(vision_to_control_queue, v2v_to_vision_queue, Vehicle_Distance)),
+        multiprocessing.Process(target=run_vision_processing, args=(vision_to_control_queue, v2v_to_vision_queue, forward_vehicle_distance)),
         multiprocessing.Process(target=run_control_simulation, args=(vision_to_control_queue, control_to_eval_queue, eval_to_control_queue)),
-        multiprocessing.Process(target=run_v2v_simulation, args=(v2v_to_vision_queue, Vehicle_Distance)),
+        multiprocessing.Process(target=run_v2v_simulation, args=(v2v_to_vision_queue, forward_vehicle_distance)),
         multiprocessing.Process(target=run_evaluate_node, args=(control_to_eval_queue, eval_to_control_queue))
     ]
 

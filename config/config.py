@@ -35,13 +35,12 @@ COMFORT_TARGETS_RMS = {
     '쾌적함': 0.5,
     '보통': 0.8
 }
-INITIAL_CALIBRATION_GAIN = 0.050
-INITIAL_PWM_WEIGHT = 1.2
+INITIAL_PR_CALIBRATION = 0.06
+INITIAL_PWM_CALIBRATION = 1.0
 
 # ================== Evaluate 모듈 설정 ==================
-LEARNING_RATE_PR = 0.1
-LEARNING_RATE_PWM = 0.1
+LEARNING_RATE_PR_CALIBRATION = 0.1
+LEARNING_RATE_PWM_CALIBRATION = 0.1
 
 # ================== Calibration 모듈 설정 ==================
-# main.py 실행 위치 기준이므로, root에 있는 파일을 가리키도록 경로 수정
-CALIBRATION_DATA_FILE_PATH = "config/speed_map.json"
+CALIBRATION_DATA_FILE_PATH = "speed_map.json"

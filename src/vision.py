@@ -9,7 +9,6 @@ import pythoncom
 import math
 from win32com.client import Dispatch, GetActiveObject
 
-# 변경된 디렉토리 구조에 맞게 import 경로 수정
 from config import config
 from utils.logger import print_at
 from samples.UCwinRoadCOM import UCwinRoadComProxy
@@ -85,7 +84,7 @@ def analyze_bump_height_map(frame, roi_mask):
     hue_mask = cv2.inRange(h_channel, config.HEIGHT_ANALYSIS_SETTINGS['hue_lower'], config.HEIGHT_ANALYSIS_SETTINGS['hue_upper'])
     analysis_mask = cv2.bitwise_and(hue_mask, roi_mask)
     contours, _ = cv2.findContours(analysis_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    estimated_height, estimated_distance = 0.0, 0.0
+    Measured_Height, Measured_Distance = 0.0, 0.0
     if contours:
         all_points = np.concatenate(contours)
         if len(all_points) > 5:
@@ -99,17 +98,17 @@ def analyze_bump_height_map(frame, roi_mask):
                         avg_hue = np.mean(hue_values)
                         h_points = config.HEIGHT_ANALYSIS_SETTINGS['height_interpolation_hue']
                         m_points = config.HEIGHT_ANALYSIS_SETTINGS['height_interpolation_m']
-                        estimated_height = np.interp(avg_hue, h_points, m_points)
+                        Measured_Height = np.interp(avg_hue, h_points, m_points)
                     
                     roi_s = config.ROI_SETTINGS_HEIGHT
                     roi_h = max(1,int(h*roi_s['bottom_y'])-int(h*roi_s['top_y']))
                     yb_norm = float(np.clip((y+hc-int(h*roi_s['top_y']))/roi_h,0.0,1.0))
                     dist_calib = config.HEIGHT_ANALYSIS_SETTINGS['distance_calibration']
                     y_points = sorted(dist_calib.keys()); dist_points = [dist_calib[y] for y in y_points]
-                    estimated_distance = float(np.interp(yb_norm,y_points,dist_points))
-    return estimated_height, estimated_distance
+                    Measured_Distance = float(np.interp(yb_norm,y_points,dist_points))
+    return Measured_Height, Measured_Distance
 
-def run_vision_processing(vision_to_control_queue, v2v_to_vision_queue, Vehicle_Distance):
+def run_vision_processing(vision_to_control_queue, v2v_to_vision_queue, forward_vehicle_distance):
     pythoncom.CoInitialize()
     winRoadProxy, my_car = None, None
     ThreeDModelGT_cache = []
@@ -144,10 +143,10 @@ def run_vision_processing(vision_to_control_queue, v2v_to_vision_queue, Vehicle_
         while my_car is None and time.time() - t0 < 15.0:
             my_car = driver.CurrentCar
             time.sleep(0.2)
-        if my_car is None and Vehicle_Distance is not None: 
+        if my_car is None and forward_vehicle_distance is not None: 
             raise RuntimeError()
     except Exception:
-        if Vehicle_Distance is not None:
+        if forward_vehicle_distance is not None:
             pythoncom.CoUninitialize()
             return
 
@@ -155,29 +154,29 @@ def run_vision_processing(vision_to_control_queue, v2v_to_vision_queue, Vehicle_
 
     while True:
         try:
-            if my_car is None and Vehicle_Distance is not None:
+            if my_car is None and forward_vehicle_distance is not None:
                  my_car = winRoadProxy.SimulationCore.TrafficSimulation.Driver.CurrentCar
                  time.sleep(0.5)
                  continue
             
             Is_V2V = False
-            if Vehicle_Distance is not None:
-                Is_V2V = (Vehicle_Distance.value <= 30.0)
+            if forward_vehicle_distance is not None:
+                Is_V2V = (forward_vehicle_distance.value <= 30.0)
 
             if Is_V2V:
                 try:
                     v2v_data = v2v_to_vision_queue.get_nowait()
                     vehicle_name = v2v_data.get('vehicle_name', 'Vehicle')
-                    distance_m = v2v_data.get('distance_m', 0.0)
+                    bump_distance = v2v_data.get('distance_m', 0.0)
                     depth_m = v2v_data.get('width_m', 0.0)
                     
-                    log_msg = f"[{v2v_data.get('source', 'V2V')}]{vehicle_name} | Dt:{distance_m:.1f}m | Dp:{depth_m:.2f}m"
+                    log_msg = f"[{v2v_data.get('source', 'V2V')}]{vehicle_name} | Dt:{bump_distance:.1f}m | Dp:{depth_m:.2f}m"
                     print_at('INFO_SOURCE', log_msg)
                     
-                    data_packet = { 'type': v2v_data.get('type'), 'Measured_Height': v2v_data.get('height_m'), 'bump_distance': distance_m, 'depth_m': depth_m, 'source': v2v_data.get('source', 'V2V') }
+                    data_packet = { 'type': v2v_data.get('type'), 'Measured_Height': v2v_data.get('height_m'), 'bump_distance': bump_distance, 'depth_m': depth_m, 'source': v2v_data.get('source', 'V2V') }
                     vision_to_control_queue.put_nowait(data_packet)
                 except queue.Empty:
-                    log_msg = f"[V2V]전방차량:{Vehicle_Distance.value:.1f}m"
+                    log_msg = f"[V2V]전방차량:{forward_vehicle_distance.value:.1f}m"
                     print_at('INFO_SOURCE', log_msg)
                     vision_to_control_queue.put_nowait({'type': 'None'})
             else:
@@ -202,19 +201,19 @@ def run_vision_processing(vision_to_control_queue, v2v_to_vision_queue, Vehicle_
                 if Bump_Type == "None":
                     Detection_History.clear()
                     
-                gt_depth_m = 0.0
+                GT_Depth_m = 0.0
                 if confirmed_type != "None":
-                    gt_depth_m = get_gt_depth(confirmed_type, ThreeDModelGT_cache, my_car)
+                    GT_Depth_m = get_gt_depth(confirmed_type, ThreeDModelGT_cache, my_car)
                 
-                if Vehicle_Distance is not None:
-                    log_msg = f"[Vision] H:{Measured_Height:.2f}m|Dt:{Measured_Distance:.1f}m|Dp:{gt_depth_m:.2f}m|T:{confirmed_type}|P:{Bump_Pattern}"
+                if forward_vehicle_distance is not None:
+                    log_msg = f"[Vision] H:{Measured_Height:.2f}m|Dt:{Measured_Distance:.1f}m|Dp:{GT_Depth_m:.2f}m|T:{confirmed_type}|P:{Bump_Pattern}"
                     print_at('INFO_SOURCE', log_msg)
 
-                data_packet = { 'type': confirmed_type, 'Measured_Height': Measured_Height, 'bump_distance': Measured_Distance, 'depth_m': gt_depth_m, 'source': 'Vision' }
+                data_packet = { 'type': confirmed_type, 'Measured_Height': Measured_Height, 'bump_distance': Measured_Distance, 'depth_m': GT_Depth_m, 'source': 'Vision' }
                 vision_to_control_queue.put_nowait(data_packet)
 
         except Exception:
-            if Vehicle_Distance is not None:
+            if forward_vehicle_distance is not None:
                 my_car = None
                 time.sleep(0.5)
         
