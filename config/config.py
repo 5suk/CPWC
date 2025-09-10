@@ -45,4 +45,4 @@ LEARNING_RATE_PR = 0.1  # pR_CAL 보정을 위한 학습률
 LEARNING_RATE_PWM = 0.1 # PWM_CAL 보정을 위한 학습률
 
 # ================== Calibration 모듈 설정 ==================
-CALIBRATION_DATA_FILE_PATH = "config/speed_map.json"
+CALIBRATION_DATA_FILE_PATH = "speed_map.json"

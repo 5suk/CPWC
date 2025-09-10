@@ -84,7 +84,7 @@ def calculate_rms(h_m, L_m, v_mps, gain):
     if v_mps <= 0 or L_m <= 0: return 0.0
     return gain * (1.0 / math.sqrt(2.0)) * h_m * (v_mps * math.pi / L_m)**2
 
-def classify_rms(rms_value):
+def classify_rms_level(rms_value):
     if rms_value is None: return "계산 불가"
     if rms_value < 0.315: return "매우 쾌적함"
     if rms_value < 0.5: return "쾌적함"
@@ -167,12 +167,11 @@ def run_control_simulation(vision_to_control_queue, control_to_eval_queue, eval_
 
                 bump_cache = find_all_bumps_and_cache(proj)
                 
-                # [수정] 시나리오 재시작 시 상태 및 큐 초기화
                 is_controlling = False
                 last_bump_type = "None" 
                 pending_correction_data = None
                 while not vision_to_control_queue.empty():
-                    vision_to_control_queue.get() # 큐 비우기
+                    vision_to_control_queue.get()
                 print_at('DEBUG_DISTANCE', "")
 
                 switched_this_round = True
@@ -181,7 +180,6 @@ def run_control_simulation(vision_to_control_queue, control_to_eval_queue, eval_
             last_x = x
 
             if not is_controlling and pending_correction_data:
-                # [수정] 이제 evaluate 모듈로부터 최종 보정값을 직접 받음
                 if pending_correction_data.get("msg") == "final_correction_factors":
                     old_gain, old_pwm = CAL_GAIN, PWM_WEIGHT
                     CAL_GAIN = pending_correction_data.get("updated_gain")
@@ -211,22 +209,22 @@ def run_control_simulation(vision_to_control_queue, control_to_eval_queue, eval_
 
                 is_controlling = True
                 
-                current_speed_kmh = read_speed_kmh(car)
-                mS_kmh = estimate_min_speed_kmh(current_speed_kmh, speed_map_data)
-                eR_rms = calculate_rms(h_m, depth_m, mS_kmh / 3.6, CAL_GAIN)
-                comfort_level = classify_rms(eR_rms)
+                current_speed = read_speed_kmh(car)
+                minimum_Speed = estimate_min_speed_kmh(current_speed, speed_map_data)
+                prediction_RMS = calculate_rms(h_m, depth_m, minimum_Speed / 3.6, CAL_GAIN)
+                prediction_Level = classify_rms_level(prediction_RMS)
                 
-                if comfort_level in ["불쾌함", "매우 불쾌함"]: tS_kmh = mS_kmh
+                if prediction_Level in ["불쾌함", "매우 불쾌함"]: target_speed = minimum_Speed
                 else:
-                    target_rms = config.COMFORT_TARGETS_RMS.get(comfort_level, 0.5)
+                    target_rms = config.COMFORT_TARGETS_RMS.get(prediction_Level, 0.5)
                     optimal_v_mps = solve_speed_for_target_rms(h_m, depth_m, target_rms, CAL_GAIN)
-                    tS_kmh = max(mS_kmh, (optimal_v_mps * 3.6 if optimal_v_mps else 0) + config.TARGET_SPEED_MARGIN_KMH)
+                    target_speed = max(minimum_Speed, (optimal_v_mps * 3.6 if optimal_v_mps else 0) + config.TARGET_SPEED_MARGIN_KMH)
                 
-                brake_pwm = calculate_brake_pwm(current_speed_kmh, tS_kmh, dist_m, PWM_WEIGHT)
+                Brake_PWM = calculate_brake_pwm(current_speed, target_speed, dist_m, PWM_WEIGHT)
 
                 source = data.get('source', 'N/A')
-                recv_log_content = f"T:{bump_type}, H:{h_m*100:.1f}cm, Dt:{dist_m:.1f}m, Dp:{depth_m:.2f}m"
-                plan_log_content = f"tS:{tS_kmh:.1f}, pR:{eR_rms:.2f}, Comfort:{comfort_level}"
+                recv_log_content = f"T:{bump_type}, M_H:{h_m*100:.1f}cm, bD:{dist_m:.1f}m, GT_Dp:{depth_m:.2f}m"
+                plan_log_content = f"tS:{target_speed:.1f}, pR:{prediction_RMS:.2f}, pL:{prediction_Level}"
                 
                 print_at('CONTROL_RECV', f"[{source}] {recv_log_content}")
                 print_at('CONTROL_PLAN', f"[Control] {plan_log_content}")
@@ -257,10 +255,10 @@ def run_control_simulation(vision_to_control_queue, control_to_eval_queue, eval_
                     print_at('DEBUG_DISTANCE', f"({target_bump_obj['name']})과의 bD: {current_dist:.1f}m")
                     
                     s = read_speed_kmh(car)
-                    print_at('CONTROL_STATE', f"[Control] cS:{s:.1f} | B_PWM:{int(brake_pwm*100)}%(tS:{tS_kmh:.1f})")
-                    if s > tS_kmh:
+                    print_at('CONTROL_STATE', f"[Control] cS:{s:.1f} | B_PWM:{int(Brake_PWM*100)}%(tS:{target_speed:.1f})")
+                    if s > target_speed:
                         try:
-                            on_time = config.CONTROL_POLL_DT * brake_pwm; off_time = config.CONTROL_POLL_DT * (1.0 - brake_pwm)
+                            on_time = config.CONTROL_POLL_DT * Brake_PWM; off_time = config.CONTROL_POLL_DT * (1.0 - Brake_PWM)
                             car.Throttle = 0.0
                             if on_time > 0: car.ParkingBrake = True; time.sleep(on_time)
                             if off_time > 0: car.ParkingBrake = False; time.sleep(off_time)
@@ -271,14 +269,13 @@ def run_control_simulation(vision_to_control_queue, control_to_eval_queue, eval_
                     if has_approached and current_dist > min_dist_so_far + 0.1:
                         break
                 
-                rS_kmh = read_speed_kmh(car)
+                actual_collision_speed = read_speed_kmh(car)
                 car.ParkingBrake = False
                 
-                # [수정] 평가 요청 시 현재 보정값을 함께 전달
-                eval_request = { "msg": "evaluate_request", "current_speed": rS_kmh, "target_speed": tS_kmh, "prediction_RMS": eR_rms, "GT_Height": target_bump_obj["gt_h"], "GT_Depth": target_bump_obj["gt_d"], "current_gain": CAL_GAIN, "current_pwm_weight": PWM_WEIGHT }
+                eval_request = { "msg": "evaluate_request", "current_speed": actual_collision_speed, "target_speed": target_speed, "prediction_RMS": prediction_RMS, "GT_Height": target_bump_obj["gt_h"], "GT_Depth": target_bump_obj["gt_d"], "current_gain": CAL_GAIN, "current_pwm_weight": PWM_WEIGHT }
                 control_to_eval_queue.put(eval_request)
                 
-                file_log_data = { "DETECT": f"[{source}] {recv_log_content}", "PLAN": f"[Control] {plan_log_content}", "COLLISION": f"충돌 속도(cS): {rS_kmh:.1f}km/h (최소 근접 거리: {min_dist_so_far:.2f}m)" }
+                file_log_data = { "DETECT": f"[{source}] {recv_log_content}", "PLAN": f"[Control] {plan_log_content}", "COLLISION": f"충돌 속도(cS): {actual_collision_speed:.1f}km/h (최소 근접 거리: {min_dist_so_far:.2f}m)" }
                 
                 try:
                     eval_response = eval_to_control_queue.get(timeout=2.0)

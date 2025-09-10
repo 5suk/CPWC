@@ -3,8 +3,8 @@ import math
 import time
 import queue
 import pythoncom
-from logger import print_at
-import config
+from utils.logger import print_at
+import config.config as config
 
 def compute_rms(v_kmh, h_m, L_m):
     if not all([isinstance(v_kmh, (int, float)), isinstance(h_m, (int, float)), isinstance(L_m, (int, float))]):
