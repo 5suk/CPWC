@@ -1,11 +1,12 @@
-# V2V.py
+# src/V2V.py
 import time
 import pythoncom
 import win32com.client
 import math
 import queue
 
-import config
+# 변경된 디렉토리 구조에 맞게 import 경로 수정
+from config import config
 from samples.UCwinRoadCOM import UCwinRoadComProxy
 from samples.UCwinRoadUtils import Distance
 

@@ -1,10 +1,12 @@
-# evaluate.py
+# src/evaluate.py
 import math
 import time
 import queue
 import pythoncom
+
+# 변경된 디렉토리 구조에 맞게 import 경로 수정
 from utils.logger import print_at
-import config.config as config
+from config import config
 
 def compute_rms(v_kmh, h_m, L_m):
     if not all([isinstance(v_kmh, (int, float)), isinstance(h_m, (int, float)), isinstance(L_m, (int, float))]):
@@ -51,12 +53,9 @@ def run_evaluate_node(control_to_eval_queue, eval_to_control_queue):
             accuracy_log = f"pR<>aR 오차: {er_error:.1f}% | tS<>cS 오차: {ts_error:.1f}%"
             print_at('EVALUATE_ACCURACY', f"[Evaluate] {accuracy_log}")
 
-            # [수정] 이동 평균 필터 적용
-            # 1. 새로운 목표 보정값 계산
             target_gain = current_gain * (actual_RMS / pR) if pR > 0.01 else current_gain
             target_pwm_weight = current_pwm_weight * (cS / tS) if tS > 0.01 else current_pwm_weight
 
-            # 2. 이동 평균 필터(학습률)를 적용하여 최종 보정값 계산
             alpha_pr = config.LEARNING_RATE_PR
             updated_gain = (current_gain * (1 - alpha_pr)) + (target_gain * alpha_pr)
 

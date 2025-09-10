@@ -1,4 +1,4 @@
-# config.py
+# config/config.py
 
 # ================== 시스템 공통 설정 ==================
 UCWIN_PROG_ID = "UCwinRoad.F8ApplicationServicesProxy"
@@ -39,10 +39,9 @@ INITIAL_CALIBRATION_GAIN = 0.050
 INITIAL_PWM_WEIGHT = 1.2
 
 # ================== Evaluate 모듈 설정 ==================
-# [추가] 이동 평균 필터를 위한 학습률 (0.0 ~ 1.0)
-# 값이 작을수록 안정적이지만, 변화에 느리게 적응합니다.
-LEARNING_RATE_PR = 0.1  # pR_CAL 보정을 위한 학습률
-LEARNING_RATE_PWM = 0.1 # PWM_CAL 보정을 위한 학습률
+LEARNING_RATE_PR = 0.1
+LEARNING_RATE_PWM = 0.1
 
 # ================== Calibration 모듈 설정 ==================
-CALIBRATION_DATA_FILE_PATH = "speed_map.json"
+# main.py 실행 위치 기준이므로, root에 있는 파일을 가리키도록 경로 수정
+CALIBRATION_DATA_FILE_PATH = "config/speed_map.json"

@@ -1,4 +1,4 @@
-# calibration.py
+# utils/calibration.py
 import os
 import sys
 import json
@@ -9,26 +9,27 @@ import multiprocessing
 import queue
 from win32com.client import Dispatch, GetActiveObject
 
-from vision import run_vision_processing 
-import config.config as config
+# 단독 실행을 위해 프로젝트 root 경로를 sys.path에 추가
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# 변경된 디렉토리 구조에 맞게 import 경로 수정
+from src.vision import run_vision_processing 
+from config import config
 
 # --- 시뮬레이션 제어를 위한 헬퍼 함수 ---
 def attach_or_launch():
-    """UC-win/Road에 연결하거나, 실행되지 않았으면 새로 시작합니다."""
     try:
         return GetActiveObject(config.UCWIN_PROG_ID)
     except:
         return Dispatch(config.UCWIN_PROG_ID)
 
 def read_speed_kmh(car):
-    """차량의 현재 속도를 km/h 단위로 읽어옵니다."""
     try:
         return float(car.Speed(1))
     except:
         return 0.0
 
 def restart_scenario(sim_core, proj, idx=0):
-    """시나리오를 초기화하고 다시 시작합니다."""
     try:
         if hasattr(sim_core, "StopAllScenarios"):
             sim_core.StopAllScenarios()
@@ -41,24 +42,18 @@ def restart_scenario(sim_core, proj, idx=0):
 
 # --- 메인 캘리브레이션 세션 함수 ---
 def run_calibration_session(target_speed):
-    """캘리브레이션 측정을 위한 메인 로직을 실행합니다."""
     pythoncom.CoInitialize()
     
-    # ======================================================================
-    # 1단계: 목표 속도에 따른 제동 강도 자동 계산
-    # ======================================================================
     if target_speed >= 50:
         brake_intensity = 1.0
     else:
-        # 50km/h에서 10km/h씩 낮아질 때마다 0.1씩 감소
         steps_down = (50 - target_speed) // 10
         brake_intensity = 1.0 - (steps_down * 0.1)
-        brake_intensity = max(0.1, brake_intensity) # 최소 제동 강도는 0.1로 제한
+        brake_intensity = max(0.1, brake_intensity)
     
     print(f"목표 속도 {target_speed}km/h에 대한 측정을 시작합니다. (계산된 제동 강도: {brake_intensity:.1f})")
 
     try:
-        # UC-win/Road 및 차량 객체 초기화
         ucwin = attach_or_launch()
         sim_core = ucwin.SimulationCore
         project = ucwin.Project
@@ -68,14 +63,12 @@ def run_calibration_session(target_speed):
         pythoncom.CoUninitialize()
         return
 
-    # Vision 프로세스를 백그라운드에서 실행
     vision_to_calib_queue = multiprocessing.Queue(maxsize=1)
     vision_process = multiprocessing.Process(target=run_vision_processing, args=(vision_to_calib_queue, None, None))
     vision_process.start()
 
     measured_speeds = []
     
-    # 시나리오 시작 (최초 한 번만 실행)
     restart_scenario(sim_core, project, 0)
     vehicle = None
     t0 = time.time()
@@ -91,7 +84,6 @@ def run_calibration_session(target_speed):
         pythoncom.CoUninitialize()
         return
 
-    # 유효한 측정 횟수가 3번에 도달할 때까지 반복
     while len(measured_speeds) < 3:
         print(f"\n--- 현재 {len(measured_speeds) + 1}/3 번째 측정 대기 중 ---")
         
@@ -149,9 +141,6 @@ def run_calibration_session(target_speed):
         vision_process.terminate()
         vision_process.join()
 
-    # ======================================================================
-    # 2단계: 최종 결과 계산 및 파일 저장
-    # ======================================================================
     if measured_speeds:
         try:
             with open(config.CALIBRATION_DATA_FILE_PATH, 'r') as f:
@@ -184,7 +173,6 @@ if __name__ == '__main__':
         multiprocessing.freeze_support()
     
     try:
-        # 제동 강도 입력을 제거하고, 목표 속도만 입력받음
         speed_in = int(input(">> 테스트를 진행할 AI 목표 속도(km/h)를 입력하세요: "))
     except ValueError as e:
         print(f"입력 오류: {e}")

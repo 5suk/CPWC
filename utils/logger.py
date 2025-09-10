@@ -39,7 +39,7 @@ def print_at(line_key, message):
 
 def log_sequence_to_file(log_data):
     try:
-        with open("log.txt", "a", encoding="utf-8") as f:
+        with open("config/log.txt", "a", encoding="utf-8") as f:
             f.write("="*80 + "\n")
             f.write(f"시퀀스 기록 시간: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write("-"*80 + "\n")

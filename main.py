@@ -5,12 +5,13 @@ import time
 import pythoncom
 from win32com.client import Dispatch, GetActiveObject
 
-import config
-from vision import run_vision_processing
-from control import run_control_simulation
-from V2V import run_v2v_simulation
-from evaluate import run_evaluate_node
-from logger import setup_logging_area
+# 변경된 디렉토리 구조에 맞게 import 경로 수정
+from config import config
+from src.vision import run_vision_processing
+from src.control import run_control_simulation
+from src.V2V import run_v2v_simulation
+from src.evaluate import run_evaluate_node
+from utils.logger import setup_logging_area
 
 def initialize_simulation():
     pythoncom.CoInitialize()

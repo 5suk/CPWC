@@ -1,4 +1,4 @@
-# vision.py
+# src/vision.py
 import cv2
 import numpy as np
 import win32gui, win32ui, win32con
@@ -9,8 +9,9 @@ import pythoncom
 import math
 from win32com.client import Dispatch, GetActiveObject
 
-import config
-from logger import print_at
+# 변경된 디렉토리 구조에 맞게 import 경로 수정
+from config import config
+from utils.logger import print_at
 from samples.UCwinRoadCOM import UCwinRoadComProxy
 from samples.UCwinRoadUtils import Distance
 
